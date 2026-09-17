@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, LostItem, FoundItem, ItemMatch } from './types';
+import { User, LostItem, FoundItem, ItemMatch, ChatMessage, HandoffLocationPreference, UserRole } from './types';
 import { 
   INITIAL_LOST_ITEMS, 
   INITIAL_FOUND_ITEMS, 
@@ -10,7 +10,7 @@ import { compute7FactorMatch } from './services/aiMatching';
 import { LandingPage } from './components/LandingPage';
 import { OwnerPortal } from './components/OwnerPortal';
 import { FinderPortal } from './components/FinderPortal';
-import { Sparkles, X } from 'lucide-react';
+import { Sparkles, X, CheckCircle } from 'lucide-react';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -35,7 +35,7 @@ export default function App() {
     const newMatches: ItemMatch[] = [];
     foundItems.forEach((found) => {
       const factors = compute7FactorMatch(newItem, found);
-      if (factors.overallScore >= 40) {
+      if (factors.overallScore >= 35) {
         newMatches.push({
           id: `match-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           lostItemId: newItem.id,
@@ -43,11 +43,16 @@ export default function App() {
           lostItem: newItem,
           foundItem: found,
           factors,
+          workflowStatus: 'none',
           verificationStatus: 'unverified',
           returnRequestStatus: 'none',
           handoffStatus: 'pending',
           ownerConfirmedReceived: false,
           finderConfirmedHandoff: false,
+          finderPointsAwarded: false,
+          ownerProposedLocation: newItem.preferredHandoff,
+          finderProposedLocation: found.preferredHandoff,
+          messages: [],
           createdAt: new Date().toISOString(),
         });
       }
@@ -57,7 +62,7 @@ export default function App() {
       setMatches((prev) => [...newMatches, ...prev]);
       showToast(`ReFind AI found ${newMatches.length} candidate match(es) for "${newItem.title}"!`);
     } else {
-      showToast(`"${newItem.title}" registered in ledger. AI engine active for incoming found reports.`);
+      showToast(`✓ "${newItem.title}" saved. ReFind AI is actively searching for matches.`);
     }
   };
 
@@ -70,7 +75,7 @@ export default function App() {
     const newMatches: ItemMatch[] = [];
     lostItems.forEach((lost) => {
       const factors = compute7FactorMatch(lost, newItem);
-      if (factors.overallScore >= 40) {
+      if (factors.overallScore >= 35) {
         newMatches.push({
           id: `match-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           lostItemId: lost.id,
@@ -78,11 +83,16 @@ export default function App() {
           lostItem: lost,
           foundItem: newItem,
           factors,
+          workflowStatus: 'none',
           verificationStatus: 'unverified',
           returnRequestStatus: 'none',
           handoffStatus: 'pending',
           ownerConfirmedReceived: false,
           finderConfirmedHandoff: false,
+          finderPointsAwarded: false,
+          ownerProposedLocation: lost.preferredHandoff,
+          finderProposedLocation: newItem.preferredHandoff,
+          messages: [],
           createdAt: new Date().toISOString(),
         });
       }
@@ -92,18 +102,173 @@ export default function App() {
       setMatches((prev) => [...newMatches, ...prev]);
       showToast(`Found item logged in custody. ReFind AI detected ${newMatches.length} matching lost report(s)!`);
     } else {
-      showToast(`"${newItem.title}" safely registered in custody.`);
+      showToast(`✓ "${newItem.title}" registered in custody.`);
     }
   };
 
-  // Update existing match (verification status, return acceptance, etc.)
+  // Update existing match
   const handleUpdateMatch = (updatedMatch: ItemMatch) => {
     setMatches((prev) =>
       prev.map((m) => (m.id === updatedMatch.id ? updatedMatch : m))
     );
   };
 
-  // Owner confirms receipt of the physical item
+  // Owner requests return of an item from Finder
+  const handleRequestReturn = (matchId: string) => {
+    setMatches((prev) =>
+      prev.map((m) => {
+        if (m.id === matchId) {
+          return {
+            ...m,
+            workflowStatus: 'return_requested',
+            returnRequestStatus: 'pending',
+            requestDate: new Date().toISOString(),
+            messages: [
+              ...m.messages,
+              {
+                id: `msg-${Date.now()}`,
+                matchId: m.id,
+                senderId: m.lostItem.ownerId || 'owner',
+                senderName: m.lostItem.ownerName || 'Owner',
+                senderRole: 'owner',
+                text: `Hello! I have reviewed this match and requested the return of my item (${m.lostItem.title}). Please let me know when you can meet.`,
+                timestamp: new Date().toISOString(),
+              }
+            ]
+          };
+        }
+        return m;
+      })
+    );
+    showToast('Return request sent to Finder! Status: Return Requested.');
+  };
+
+  // Finder accepts the return request
+  const handleAcceptReturn = (matchId: string) => {
+    setMatches((prev) =>
+      prev.map((m) => {
+        if (m.id === matchId) {
+          return {
+            ...m,
+            workflowStatus: 'return_accepted',
+            returnRequestStatus: 'accepted',
+            messages: [
+              ...m.messages,
+              {
+                id: `msg-${Date.now()}`,
+                matchId: m.id,
+                senderId: m.foundItem.finderId || 'finder',
+                senderName: m.foundItem.finderName || 'Finder',
+                senderRole: 'finder',
+                text: `I have accepted your return request. Let's agree on the safe handoff location below!`,
+                timestamp: new Date().toISOString(),
+              }
+            ]
+          };
+        }
+        return m;
+      })
+    );
+
+    // Award +20 points for accepted return
+    if (currentUser && currentUser.role.toLowerCase() === 'finder') {
+      setCurrentUser((prev) => prev ? { ...prev, rewardPoints: (prev.rewardPoints || 0) + 20 } : null);
+    }
+    showToast('Return request ACCEPTED! Communication & Safe Handoff unlocked. (+20 Finder Credits)');
+  };
+
+  // Finder declines the return request
+  const handleDeclineReturn = (matchId: string) => {
+    setMatches((prev) =>
+      prev.map((m) =>
+        m.id === matchId
+          ? { ...m, workflowStatus: 'return_declined', returnRequestStatus: 'declined' }
+          : m
+      )
+    );
+    showToast('Return request declined.');
+  };
+
+  // In-app message exchange between matched Owner & Finder
+  const handleSendMessage = (matchId: string, text: string, senderId: string, senderName: string, senderRole: UserRole) => {
+    if (!text.trim()) return;
+    const newMsg: ChatMessage = {
+      id: `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      matchId,
+      senderId,
+      senderName,
+      senderRole,
+      text: text.trim(),
+      timestamp: new Date().toISOString(),
+    };
+
+    setMatches((prev) =>
+      prev.map((m) =>
+        m.id === matchId ? { ...m, messages: [...m.messages, newMsg] } : m
+      )
+    );
+  };
+
+  // Propose handoff location
+  const handleProposeLocation = (matchId: string, role: UserRole, loc: HandoffLocationPreference) => {
+    setMatches((prev) =>
+      prev.map((m) => {
+        if (m.id === matchId) {
+          if (role === 'owner') {
+            return { ...m, ownerProposedLocation: loc };
+          } else {
+            return { ...m, finderProposedLocation: loc };
+          }
+        }
+        return m;
+      })
+    );
+    showToast('Handoff location suggestion updated.');
+  };
+
+  // Confirm agreed handoff location
+  const handleConfirmLocation = (matchId: string, agreedLoc: HandoffLocationPreference) => {
+    setMatches((prev) =>
+      prev.map((m) => {
+        if (m.id === matchId) {
+          return {
+            ...m,
+            agreedLocation: agreedLoc,
+            workflowStatus: 'location_confirmed',
+            handoffStatus: 'agreed',
+            messages: [
+              ...m.messages,
+              {
+                id: `msg-${Date.now()}`,
+                matchId: m.id,
+                senderId: 'system',
+                senderName: 'ReFind Safe Handoff',
+                senderRole: 'finder',
+                text: `Handoff location agreed: ${agreedLoc.locationName} (${agreedLoc.landmark}). Instructions: ${agreedLoc.instructions}`,
+                timestamp: new Date().toISOString(),
+              }
+            ]
+          };
+        }
+        return m;
+      })
+    );
+    showToast('Handoff location confirmed! Status: Handoff Scheduled.');
+  };
+
+  // Finder marks item handed over
+  const handleFinderHandedOver = (matchId: string) => {
+    setMatches((prev) =>
+      prev.map((m) =>
+        m.id === matchId
+          ? { ...m, finderConfirmedHandoff: true, workflowStatus: 'item_handed_over' }
+          : m
+      )
+    );
+    showToast('Item marked as HANDED OVER by Finder. Awaiting Owner receipt confirmation.');
+  };
+
+  // Owner confirms receipt of the physical item -> Completes case and awards Finder +100 Credits
   const handleConfirmRecovery = (matchId: string) => {
     const targetMatch = matches.find((m) => m.id === matchId);
     if (!targetMatch) return;
@@ -111,6 +276,8 @@ export default function App() {
     const updatedMatch: ItemMatch = {
       ...targetMatch,
       ownerConfirmedReceived: true,
+      finderPointsAwarded: true,
+      workflowStatus: 'completed',
       handoffStatus: 'completed',
     };
 
@@ -121,17 +288,32 @@ export default function App() {
     // Update lost and found item statuses
     setLostItems((prev) =>
       prev.map((l) =>
-        l.id === targetMatch.lostItem.id ? { ...l, status: 'Recovered' } : l
+        l.id === targetMatch.lostItemId ? { ...l, status: 'Recovered' } : l
       )
     );
     setFoundItems((prev) =>
       prev.map((f) =>
-        f.id === targetMatch.foundItem.id ? { ...f, status: 'Recovered' } : f
+        f.id === targetMatch.foundItemId ? { ...f, status: 'Recovered' } : f
       )
     );
 
-    showToast('Success! Item marked as RECOVERED. +100 Reward Points credited to the Finder.');
+    // If active user is finder, award points directly
+    if (currentUser && currentUser.role.toLowerCase() === 'finder') {
+      setCurrentUser((prev) =>
+        prev
+          ? {
+              ...prev,
+              rewardPoints: (prev.rewardPoints || 0) + 100,
+              successfulReturns: (prev.successfulReturns || 0) + 1,
+            }
+          : null
+      );
+    }
+
+    showToast('Success! Receipt confirmed. Item marked as RECOVERED and +100 Finder Credits awarded!');
   };
+
+  const isOwner = currentUser?.role?.toLowerCase() === 'owner';
 
   return (
     <>
@@ -156,7 +338,7 @@ export default function App() {
       {/* Screen Routing */}
       {!currentUser ? (
         <LandingPage onLogin={setCurrentUser} />
-      ) : currentUser.role === 'OWNER' ? (
+      ) : isOwner ? (
         <OwnerPortal
           user={currentUser}
           lostItems={lostItems}
@@ -164,6 +346,10 @@ export default function App() {
           matches={matches}
           onAddLostItem={handleAddLostItem}
           onUpdateMatch={handleUpdateMatch}
+          onRequestReturn={handleRequestReturn}
+          onSendMessage={handleSendMessage}
+          onProposeLocation={handleProposeLocation}
+          onConfirmLocation={handleConfirmLocation}
           onConfirmRecovery={handleConfirmRecovery}
           onLogout={() => setCurrentUser(null)}
         />
@@ -175,6 +361,12 @@ export default function App() {
           matches={matches}
           onAddFoundItem={handleAddFoundItem}
           onUpdateMatch={handleUpdateMatch}
+          onAcceptReturn={handleAcceptReturn}
+          onDeclineReturn={handleDeclineReturn}
+          onSendMessage={handleSendMessage}
+          onProposeLocation={handleProposeLocation}
+          onConfirmLocation={handleConfirmLocation}
+          onFinderHandedOver={handleFinderHandedOver}
           onLogout={() => setCurrentUser(null)}
         />
       )}

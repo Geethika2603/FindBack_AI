@@ -12,9 +12,9 @@ export interface User {
 }
 
 export interface PrivateIdentifyingInfo {
-  feature1: string;
-  feature2: string;
-  feature3: string;
+  feature1: string; // e.g. What unique sticker/mark was on the item?
+  feature2: string; // e.g. What was the approximate capacity/size?
+  feature3: string; // e.g. Was there any scratch, damage or unique feature?
 }
 
 export interface HandoffLocationPreference {
@@ -35,7 +35,7 @@ export interface LostItem {
   dateLost: string;
   timeLost: string;
   privateFeatures: PrivateIdentifyingInfo;
-  status: 'Possible Match' | 'Matched' | 'Waiting for Match' | 'Recovered' | 'Open';
+  status: 'Searching for Match' | 'Possible Match' | 'Matched' | 'Waiting for Match' | 'Recovered' | 'Open';
   isDemo?: boolean;
   ownerId?: string;
   ownerName?: string;
@@ -55,7 +55,7 @@ export interface FoundItem {
   dateFound: string;
   timeFound: string;
   custodyLocation?: string;
-  status: 'Possible Match' | 'Matched' | 'Open' | 'Recovered';
+  status: 'In Custody / Searching for Owner' | 'Possible Match' | 'Matched' | 'Open' | 'Recovered';
   isDemo?: boolean;
   finderId?: string;
   finderName?: string;
@@ -75,6 +75,25 @@ export interface MatchFactors {
   matchedHighlights: string[];
 }
 
+export interface ChatMessage {
+  id: string;
+  matchId: string;
+  senderId: string;
+  senderName: string;
+  senderRole: UserRole;
+  text: string;
+  timestamp: string;
+}
+
+export type HandoffWorkflowStatus = 
+  | 'none'
+  | 'return_requested'
+  | 'return_accepted'
+  | 'return_declined'
+  | 'location_confirmed'
+  | 'item_handed_over'
+  | 'completed';
+
 export interface ItemMatch {
   id: string;
   lostItemId: string;
@@ -82,6 +101,7 @@ export interface ItemMatch {
   lostItem: LostItem;
   foundItem: FoundItem;
   factors: MatchFactors;
+  workflowStatus: HandoffWorkflowStatus;
   verificationStatus: 'unverified' | 'in_progress' | 'verified' | 'failed';
   verificationAttempts?: number;
   returnRequestStatus?: 'none' | 'pending' | 'accepted' | 'declined';
@@ -89,7 +109,13 @@ export interface ItemMatch {
   ownerConfirmedReceived?: boolean;
   finderConfirmedHandoff?: boolean;
   finderPointsAwarded?: boolean;
+  ownerProposedLocation?: HandoffLocationPreference;
+  finderProposedLocation?: HandoffLocationPreference;
   agreedLocation?: HandoffLocationPreference;
+  ownerConfirmedLocation?: boolean;
+  finderConfirmedLocation?: boolean;
+  requestDate?: string;
+  messages: ChatMessage[];
   createdAt: string;
 }
 
@@ -106,7 +132,7 @@ export type OwnerNavTab =
   | 'report_lost'
   | 'my_lost_items'
   | 'possible_matches'
-  | 'verification'
+  | 'messages'
   | 'handoff';
 
 export type FinderNavTab = 
@@ -114,7 +140,8 @@ export type FinderNavTab =
   | 'report_found'
   | 'my_found_items'
   | 'possible_matches'
-  | 'return_requests'
+  | 'messages'
   | 'handoff'
   | 'rewards';
+
 
